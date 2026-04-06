@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Flood Monitoring System</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial; background: #0a1628; color: #e2e8f0; padding: 20px; }
+
+    .header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+    .header h1 { color: #38bdf8; font-size: 22px; }
+    .header p { color: #64748b; font-size: 12px; margin-top: 2px; }
+
+    .status-bar { display: flex; gap: 8px; margin-bottom: 16px; padding: 10px 14px; background: #0f2040; border-radius: 8px; border: 1px solid #1e3a5f; align-items: center; flex-wrap: wrap; }
+    .status-bar span { font-size: 12px; color: #64748b; }
+    .badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; }
+    .badge-aman    { background: #052e16; color: #4ade80; border: 1px solid #166534; }
+    .badge-siaga   { background: #422006; color: #fb923c; border: 1px solid #9a3412; }
+    .badge-awas    { background: #431407; color: #fbbf24; border: 1px solid #92400e; }
+    .badge-bahaya  { background: #450a0a; color: #f87171; border: 1px solid #991b1b; }
+
+    .grid-stat { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+    .stat-card { background: #0f2040; border: 1px solid #1e3a5f; border-radius: 10px; padding: 14px 16px; }
+    .stat-card .label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .stat-card .value { font-size: 26px; font-weight: bold; }
+    .stat-card .sub { font-size: 11px; color: #64748b; margin-top: 4px; }
+
+    .grid-main { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 12px; }
+    .grid-bottom { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px; max-width: 520px; }
+    .chart-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+    .chart-toolbar label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+    #chartDeviceSelect { margin-bottom: 0; max-width: 280px; }
+
+    .card { background: #0f2040; border: 1px solid #1e3a5f; border-radius: 10px; padding: 16px; }
+    .card h2 { font-size: 12px; color: #7dd3fc; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 14px; display: flex; align-items: center; gap: 6px; }
+    canvas { max-height: 220px; }
+
+    .device-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #1e3a5f; }
+    .device-item:last-child { border-bottom: none; }
+    .device-name { font-size: 13px; font-weight: bold; }
+    .device-loc { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+    .dot-online { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
+    .dot-offline { background: #f87171; }
+
+    .water-bar-wrap { margin-bottom: 10px; }
+    .water-bar-wrap .dev-label { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+    .water-bar-bg { background: #1e3a5f; border-radius: 4px; height: 10px; }
+    .water-bar-fill { height: 10px; border-radius: 4px; transition: width 0.5s; }
+
+    .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+    select { width: 100%; padding: 8px; background: #1e3a5f; color: #e2e8f0; border: 1px solid #2e4a7f; border-radius: 6px; font-size: 13px; margin-bottom: 10px; }
+    .btn { padding: 9px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 12px; width: 100%; }
+    .btn-start  { background: #166534; color: #4ade80; }
+    .btn-stop   { background: #7f1d1d; color: #f87171; }
+    .btn-alert  { background: #78350f; color: #fbbf24; }
+    .btn-reset  { background: #1e3a5f; color: #94a3b8; }
+    .cmd-result { font-size: 11px; color: #94a3b8; margin-top: 8px; min-height: 16px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { padding: 6px 8px; text-align: left; color: #475569; border-bottom: 1px solid #1e3a5f; font-size: 11px; }
+    td { padding: 7px 8px; border-bottom: 1px solid #0f2040; }
+    tr:hover td { background: #0a1e3a; }
+
+    .level-aman   { color: #4ade80; font-weight: bold; font-size: 11px; }
+    .level-siaga  { color: #fb923c; font-weight: bold; font-size: 11px; }
+    .level-awas   { color: #fbbf24; font-weight: bold; font-size: 11px; }
+    .level-bahaya { color: #f87171; font-weight: bold; font-size: 11px; }
+
+    .alert-banner { display: none; background: #450a0a; border: 1px solid #991b1b; border-radius: 8px; padding: 10px 16px; margin-bottom: 14px; color: #fca5a5; font-size: 13px; align-items: center; gap: 10px; }
+    .alert-banner.show { display: flex; }
+    .pulse { width: 10px; height: 10px; border-radius: 50%; background: #f87171; animation: pulse 1s infinite; flex-shrink: 0; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(1.4)} }
+
+    .timestamp { font-size: 10px; color: #475569; text-align: right; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>🌊 Flood Monitoring System</h1>
+    <p>Sistem Monitoring Banjir Berbasis IoT & REST API — Real-time Water Level Surveillance</p>
+  </div>
+</div>
+
+<!-- Alert Banner -->
+<div class="alert-banner" id="alertBanner">
+  <div class="pulse"></div>
+  <span id="alertMsg">⚠ Peringatan! Ketinggian air melebihi batas BAHAYA pada beberapa sensor.</span>
+</div>
+
+<!-- Status Level Legend -->
+<div class="status-bar">
+  <span>Klasifikasi Level:</span>
+  <span class="badge badge-aman">AMAN &lt; 50cm</span>
+  <span class="badge badge-siaga">SIAGA 50–100cm</span>
+  <span class="badge badge-awas">AWAS 100–150cm</span>
+  <span class="badge badge-bahaya">BAHAYA &gt; 150cm</span>
+</div>
+
+<!-- Stat Cards -->
+<div class="grid-stat">
+  <div class="stat-card">
+    <div class="label">Device Online</div>
+    <div class="value" id="statOnline" style="color:#4ade80">—</div>
+    <div class="sub">dari total <span id="statTotal">—</span> device</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Rata-rata Ketinggian Air</div>
+    <div class="value" id="statAvg" style="color:#38bdf8">—</div>
+    <div class="sub">cm (semua sensor)</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Status Tertinggi</div>
+    <div class="value" id="statLevel" style="font-size:18px">—</div>
+    <div class="sub" id="statLevelDev">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Total Data Masuk</div>
+    <div class="value" id="statCount" style="color:#a78bfa">—</div>
+    <div class="sub">record sensor</div>
+  </div>
+</div>
+
+<!-- Main Grid -->
+<div class="grid-main">
+  <!-- Grafik Ketinggian Air Real-Time -->
+  <div class="card">
+    <h2>📈 Ketinggian Air Real-Time (cm)</h2>
+    <div class="chart-toolbar">
+      <label for="chartDeviceSelect">Tampilkan data dari</label>
+      <select id="chartDeviceSelect" aria-label="Pilih device untuk grafik">
+        <option value="">Memuat device...</option>
+      </select>
+    </div>
+    <canvas id="chartWater"></canvas>
+    <div class="timestamp" id="lastUpdate">Memuat data...</div>
+  </div>
+  <!-- Status Device -->
+  <div class="card">
+    <h2>📡 Status Perangkat Sensor</h2>
+    <div id="deviceList">Memuat...</div>
+  </div>
+</div>
+
+<!-- Bottom Grid -->
+<div class="grid-bottom">
+  <div class="card">
+    <h2>🎮 Panel Kontrol</h2>
+    <select id="devSelect" aria-label="Device untuk perintah">
+      <option value="">Memuat device...</option>
+    </select>
+    <div class="control-grid">
+      <button class="btn btn-start"  onclick="sendCmd('start')">▶ Aktifkan</button>
+      <button class="btn btn-stop"   onclick="sendCmd('stop')">⏹ Nonaktifkan</button>
+      <button class="btn btn-alert"  onclick="sendCmd('alert')">🚨 Sirine</button>
+      <button class="btn btn-reset"  onclick="sendCmd('reset')">↺ Reset</button>
+    </div>
+    <p class="cmd-result" id="cmdResult"></p>
+    <hr style="border-color:#1e3a5f;margin:10px 0">
+    <div style="font-size:11px;color:#475569;margin-bottom:6px">AMBANG BATAS NOTIFIKASI</div>
+    <div style="display:flex;align-items:center;gap:10px;font-size:12px">
+      <span style="color:#64748b">Siaga:</span>
+      <input type="range" min="30" max="120" value="50" style="flex:1" id="thSiaga" oninput="document.getElementById('lblSiaga').textContent=this.value+'cm'">
+      <span id="lblSiaga" style="min-width:40px;color:#fb923c">50cm</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;font-size:12px;margin-top:6px">
+      <span style="color:#64748b">Bahaya:</span>
+      <input type="range" min="100" max="200" value="150" style="flex:1" id="thBahaya" oninput="document.getElementById('lblBahaya').textContent=this.value+'cm'">
+      <span id="lblBahaya" style="min-width:40px;color:#f87171">150cm</span>
+    </div>
+  </div>
+</div>
+
+<!-- Log Aktivitas -->
+<div class="card">
+  <h2>📋 Log Aktivitas Sistem</h2>
+  <table>
+    <thead><tr><th>Waktu</th><th>Device</th><th>Aksi</th><th>Detail</th></tr></thead>
+    <tbody id="logTable"><tr><td colspan="4" style="color:#475569">Memuat log...</td></tr></tbody>
+  </table>
+</div>
+
+<script>
+const API = "http://flood_monitoring.test/api";
+const HDR = { "X-API-KEY": "FLOOD-SECRET-KEY-2025", "Content-Type": "application/json" };
+
+function getLevel(cm) {
+  if (cm > 150) return { label: 'BAHAYA', cls: 'level-bahaya', badge: 'badge-bahaya' };
+  if (cm > 100) return { label: 'AWAS',   cls: 'level-awas',   badge: 'badge-awas' };
+  if (cm > 50)  return { label: 'SIAGA',  cls: 'level-siaga',  badge: 'badge-siaga' };
+  return             { label: 'AMAN',   cls: 'level-aman',   badge: 'badge-aman' };
+}
+
+const COLORS = {
+  DEV001: { line: '#38bdf8', fill: 'rgba(56,189,248,0.15)' },
+  DEV002: { line: '#4ade80', fill: 'rgba(74,222,128,0.15)' },
+  DEV003: { line: '#f97316', fill: 'rgba(249,115,22,0.15)' },
+};
+
+const chartWater = new Chart(document.getElementById('chartWater'), {
+  type: 'line',
+  data: { labels: [], datasets: [] },
+  options: {
+    responsive: true, animation: false,
+    plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
+    scales: {
+      x: { ticks: { color: '#475569', maxTicksLimit: 10, font: { size: 10 } }, grid: { color: '#0f2040' } },
+      y: {
+        ticks: { color: '#475569', font: { size: 10 }, callback: v => v + ' cm' },
+        grid: { color: '#1e3a5f' },
+        min: 0,
+        max: 200
+      }
+    }
+  }
+});
+
+function fillDeviceSelects(devices, preferredChartId) {
+  const chartSel = document.getElementById('chartDeviceSelect');
+  const cmdSel = document.getElementById('devSelect');
+  const opts = devices.length
+    ? devices.map(dv => {
+        const label = [dv.device_id, dv.name || dv.location].filter(Boolean).join(' — ');
+        return `<option value="${dv.device_id}">${label}</option>`;
+      }).join('')
+    : '<option value="">— Belum ada device —</option>';
+
+  const prevChart = chartSel.value || preferredChartId;
+  const prevCmd = cmdSel.value;
+
+  chartSel.innerHTML = opts;
+  cmdSel.innerHTML = opts;
+
+  if (devices.some(d => d.device_id === prevChart)) chartSel.value = prevChart;
+  else if (devices[0]) chartSel.value = devices[0].device_id;
+
+  if (devices.some(d => d.device_id === prevCmd)) cmdSel.value = prevCmd;
+  else if (devices[0]) cmdSel.value = devices[0].device_id;
+}
+
+async function fetchData() {
+  try {
+    const chartDevice = document.getElementById('chartDeviceSelect').value;
+    const q = chartDevice ? `?chart_device=${encodeURIComponent(chartDevice)}&chart_limit=50` : '?chart_limit=50';
+    const r = await fetch(`${API}/dashboard/data${q}`, { headers: HDR });
+    const d = await r.json();
+
+    fillDeviceSelects(d.devices, d.chart_device);
+
+    // Group per device (reading terbaru per device untuk bar & daftar)
+    const grouped = {};
+    (d.latest_data || []).forEach(s => {
+      if (!grouped[s.device_id]) grouped[s.device_id] = [];
+      grouped[s.device_id].push(s);
+    });
+
+    const sel = document.getElementById('chartDeviceSelect').value || d.chart_device;
+    const readings = Array.isArray(d.chart_readings) ? d.chart_readings : [];
+    const labels = readings.map(s =>
+      new Date(s.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    );
+    const c = COLORS[sel] || { line: '#38bdf8', fill: 'rgba(56,189,248,0.15)' };
+
+    chartWater.data.labels = labels;
+    chartWater.data.datasets = sel ? [{
+      label: `${sel} — ketinggian air (cm)`,
+      data: readings.map(s => s.water_level),
+      borderColor: c.line,
+      backgroundColor: c.fill,
+      tension: 0.35,
+      fill: true,
+      pointRadius: 3,
+      borderWidth: 2,
+    }] : [];
+    chartWater.update();
+
+    // Stat cards
+    const online = (d.devices || []).filter(dv => dv.status === 'online').length;
+    const allWater = (d.latest_data || []).map(s => s.water_level);
+    const avg = allWater.length ? (allWater.reduce((a,b)=>a+b,0)/allWater.length).toFixed(1) : '—';
+    const maxW = allWater.length ? Math.max(...allWater) : 0;
+    const lvl = getLevel(maxW);
+    const maxDev = (d.latest_data || []).find(s => s.water_level === maxW);
+
+    document.getElementById('statOnline').textContent = online;
+    document.getElementById('statTotal').textContent = (d.devices || []).length;
+    document.getElementById('statAvg').textContent = avg;
+    document.getElementById('statLevel').innerHTML = `<span class="${lvl.cls}">${lvl.label}</span>`;
+    document.getElementById('statLevelDev').textContent = maxDev ? `${maxDev.device_id} — ${maxW.toFixed(1)} cm` : '—';
+    document.getElementById('statCount').textContent = (d.latest_data || []).length;
+    document.getElementById('lastUpdate').textContent = 'Update: ' + new Date().toLocaleString('id-ID');
+
+    // Alert banner
+    const hasBahaya = (d.latest_data || []).some(s => s.water_level > 150);
+    document.getElementById('alertBanner').classList.toggle('show', hasBahaya);
+
+    // Device list with water bar
+    document.getElementById('deviceList').innerHTML = (d.devices || []).map(dv => {
+      const latest = grouped[dv.device_id]?.[0];
+      const wl = latest ? latest.water_level : 0;
+      const lv = getLevel(wl);
+      const pct = Math.min((wl / 200) * 100, 100).toFixed(0);
+      const barColor = wl > 150 ? '#f87171' : wl > 100 ? '#fbbf24' : wl > 50 ? '#fb923c' : '#4ade80';
+      return `
+        <div class="device-item">
+          <div>
+            <div class="device-name">
+              <span class="dot ${dv.status === 'online' ? 'dot-online' : 'dot-offline'}"></span>
+              ${dv.device_id}
+            </div>
+            <div class="device-loc">${dv.location || 'Lokasi tidak diketahui'}</div>
+            <div class="water-bar-wrap" style="margin-top:6px;width:140px">
+              <div class="water-bar-bg">
+                <div class="water-bar-fill" style="width:${pct}%;background:${barColor}"></div>
+              </div>
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:16px;font-weight:bold;color:${barColor}">${wl.toFixed(1)} cm</div>
+            <span class="${lv.cls}">${lv.label}</span>
+          </div>
+        </div>`;
+    }).join('');
+
+  } catch(e) { console.error(e); }
+}
+
+async function fetchLog() {
+  try {
+    const r = await fetch(`${API}/dashboard/log`, { headers: HDR });
+    const logs = await r.json();
+    document.getElementById('logTable').innerHTML = logs.map(l => `
+      <tr>
+        <td style="color:#475569">${new Date(l.created_at).toLocaleString('id-ID')}</td>
+        <td style="color:#7dd3fc">${l.device_id || '—'}</td>
+        <td>${l.action}</td>
+        <td style="color:#94a3b8">${l.detail || '—'}</td>
+      </tr>`).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function sendCmd(cmd) {
+  const dev = document.getElementById('devSelect').value;
+  if (!dev) {
+    document.getElementById('cmdResult').textContent = '❌ Pilih device terlebih dahulu';
+    return;
+  }
+  try {
+    const r = await fetch(`${API}/command/send`, {
+      method: 'POST', headers: HDR,
+      body: JSON.stringify({ device_id: dev, command: cmd })
+    });
+    await r.json();
+    document.getElementById('cmdResult').textContent = `✅ Perintah "${cmd}" dikirim ke ${dev}`;
+    setTimeout(() => document.getElementById('cmdResult').textContent = '', 4000);
+  } catch(e) {
+    document.getElementById('cmdResult').textContent = `❌ Gagal mengirim perintah`;
+  }
+}
+
+document.getElementById('chartDeviceSelect').addEventListener('change', fetchData);
+
+fetchData(); fetchLog();
+setInterval(() => { fetchData(); fetchLog(); }, 5000);
+</script>
+</body>
+</html>

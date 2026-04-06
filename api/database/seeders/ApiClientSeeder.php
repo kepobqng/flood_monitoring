@@ -1,0 +1,20 @@
+<?php
+
+namespace Database\Seeders;
+
+use Illuminate\Database\Console\Seeds\WithoutModelEvents;
+use Illuminate\Database\Seeder;
+
+class ApiClientSeeder extends Seeder
+{
+    /**
+     * Run the database seeds.
+     */
+    public function run(): void
+    {
+       \App\Models\ApiClient::create([
+    'name'    => 'flood-system',
+    'api_key' => 'FLOOD-SECRET-KEY-2025'
+]);
+    }
+}
