@@ -1,43 +1,100 @@
-import requests, time
+import time
+import requests
 
 API_BASE = "http://flood_monitoring.test/api"
-API_KEY  = "FLOOD-SECRET-KEY-2025"
-DEVICE_ID = "DEV001"
+API_KEY = "FLOOD-SECRET-KEY-2025"
+WORKER_ID = "worker-main"
+DEVICE_IDS = ["DEV001", "DEV002", "DEV003"]
+POLL_INTERVAL_SECONDS = 3
 
 HEADERS = {"X-API-KEY": API_KEY, "Content-Type": "application/json"}
 
+
+def update_status(device_id, status, message=""):
+    try:
+        requests.post(
+            f"{API_BASE}/status/update",
+            json={
+                "worker_id": WORKER_ID,
+                "device_id": device_id,
+                "status": status,
+                "message": message,
+            },
+            headers=HEADERS,
+            timeout=5,
+        )
+    except Exception as e:
+        print(f"[WORKER] gagal update status {device_id}: {e}")
+
+
+def fetch_command(device_id):
+    response = requests.get(
+        f"{API_BASE}/command/get",
+        params={"device_id": device_id},
+        headers=HEADERS,
+        timeout=5,
+    )
+    if not response.ok:
+        raise RuntimeError(f"fetch command {device_id} gagal ({response.status_code})")
+    return response.json()
+
+
+def mark_done(command_id, device_id):
+    response = requests.post(
+        f"{API_BASE}/command/done",
+        json={"id": command_id, "device_id": device_id},
+        headers=HEADERS,
+        timeout=5,
+    )
+    if not response.ok:
+        raise RuntimeError(f"mark done {device_id} gagal ({response.status_code})")
+
+
+def execute_command(device_id, command):
+    if command == "start":
+        print(f"[WORKER] {device_id}: Monitoring DIMULAI")
+        return "running", "monitoring started"
+    if command == "stop":
+        print(f"[WORKER] {device_id}: Monitoring DIHENTIKAN")
+        return "stopped", "monitoring stopped"
+    if command == "alert":
+        print(f"[WORKER] {device_id}: ALERT sirine banjir AKTIF")
+        return "alerting", "alert command executed"
+    if command == "reset":
+        print(f"[WORKER] {device_id}: RESET sistem")
+        return "stopped", "system reset executed"
+
+    print(f"[WORKER] {device_id}: command tidak dikenal -> {command}")
+    return "unknown_command", f"unknown command: {command}"
+
+
 def poll():
+    print(f"[WORKER] start polling multi-device: {', '.join(DEVICE_IDS)}")
     while True:
-        try:
-            # Ambil command pending
-            r = requests.get(f"{API_BASE}/command/get",
-                             params={"device_id": DEVICE_ID},
-                             headers=HEADERS)
-            cmd = r.json()
+        for device_id in DEVICE_IDS:
+            try:
+                update_status(device_id, "idle", "polling command")
+                cmd = fetch_command(device_id)
 
-            if cmd:
-                print(f"[WORKER] Command diterima: {cmd['command']}")
+                if not cmd:
+                    print(f"[WORKER] {device_id}: tidak ada command")
+                    continue
 
-                # Eksekusi logika
-                if cmd['command'] == 'start':
-                    print("[WORKER] Monitoring DIMULAI")
-                elif cmd['command'] == 'stop':
-                    print("[WORKER] Monitoring DIHENTIKAN")
-                elif cmd['command'] == 'alert':
-                    print("[WORKER] ⚠️  SIRINE BANJIR DIAKTIFKAN!")
+                command_id = cmd.get("id")
+                command = cmd.get("command", "")
+                print(f"[WORKER] {device_id}: command diterima -> {command}")
+                status, message = execute_command(device_id, command)
+                update_status(device_id, status, message)
 
-                # Lapor selesai ke API
-                requests.post(f"{API_BASE}/command/done",
-                              json={"id": cmd['id'], "device_id": DEVICE_ID},
-                              headers=HEADERS)
-                print(f"[WORKER] Command ID {cmd['id']} → executed")
-            else:
-                print("[WORKER] Tidak ada command, polling...")
+                if command_id is not None:
+                    mark_done(command_id, device_id)
+                    print(f"[WORKER] {device_id}: command ID {command_id} -> executed")
+            except Exception as e:
+                print(f"[WORKER] {device_id}: error -> {e}")
+                update_status(device_id, "error", str(e))
 
-        except Exception as e:
-            print(f"[WORKER] Error: {e}")
+        time.sleep(POLL_INTERVAL_SECONDS)
 
-        time.sleep(3)  # polling tiap 3 detik
 
 if __name__ == "__main__":
     poll()

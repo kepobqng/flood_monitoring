@@ -12,9 +12,9 @@ class ApiClientSeeder extends Seeder
      */
     public function run(): void
     {
-       \App\Models\ApiClient::create([
-    'name'    => 'flood-system',
-    'api_key' => 'FLOOD-SECRET-KEY-2025'
-]);
+        \App\Models\ApiClient::updateOrCreate(
+            ['api_key' => 'FLOOD-SECRET-KEY-2025'],
+            ['name' => 'flood-system']
+        );
     }
 }

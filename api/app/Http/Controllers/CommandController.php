@@ -8,6 +8,11 @@ class CommandController extends Controller
 {
     public function send(Request $request)
     {
+        $request->validate([
+            'device_id' => 'required|string',
+            'command' => 'required|string',
+        ]);
+
         $cmd = Command::create([
             'device_id' => $request->device_id,
             'command'   => $request->command,
@@ -20,7 +25,10 @@ class CommandController extends Controller
             'detail'    => $request->command
         ]);
 
-        return response()->json(['message' => 'Command queued', 'id' => $cmd->id]);
+        return response()->json([
+            'message' => 'Command queued',
+            'id' => $cmd->id,
+        ]);
     }
 
     public function get(Request $request)
@@ -43,4 +51,5 @@ class CommandController extends Controller
 
         return response()->json(['message' => 'Command updated']);
     }
+
 }
