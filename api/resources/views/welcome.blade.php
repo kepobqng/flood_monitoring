@@ -22,6 +22,17 @@
           <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path>
         </svg>
       </button>
+      <button class="btn warning icon-only" id="sirenBtn" title="Nyalakan/Matikan Audio Sirene" aria-label="Nyalakan/Matikan Audio Sirene">
+        <svg class="siren-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 14a4 4 0 0 1 8 0v3H8z"></path>
+          <path d="M7 17h10"></path>
+          <path d="M12 4v2"></path>
+          <path d="M5 8l1.5 1"></path>
+          <path d="M19 8l-1.5 1"></path>
+        </svg>
+      </button>
+      <button class="btn secondary" id="sirenModeBtn" title="Ubah mode sirine">Mode Sirine: Manual</button>
+      <input id="sirenFileInput" type="file" accept="audio/mpeg,.mp3" style="display:none" />
       <button class="btn secondary icon-only" id="lockBtn" title="Kunci/Buka Kunci Layout" aria-label="Kunci/Buka Kunci Layout">
         <svg class="lock-icon lock-open" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M17 8h-1V6a4 4 0 0 0-7.87-1"/>
@@ -46,6 +57,7 @@
           <option value="chart_device">Grafik per Perangkat</option>
           <option value="device_status">Status Perangkat</option>
           <option value="control_panel">Panel Kontrol</option>
+          <option value="water_history">Riwayat Ketinggian Air</option>
           <option value="command_history">Riwayat Command</option>
           <option value="worker_status">Status Worker</option>
           <option value="stat_online">Device Online</option>
@@ -133,6 +145,9 @@
   const elGrid = document.getElementById("dashboardGrid");
   const elSaveStatus = document.getElementById("saveStatus");
   const elThemeBtn = document.getElementById("themeBtn");
+  const elSirenBtn = document.getElementById("sirenBtn");
+  const elSirenModeBtn = document.getElementById("sirenModeBtn");
+  const elSirenFileInput = document.getElementById("sirenFileInput");
   const elLockBtn = document.getElementById("lockBtn");
   const elWidgetModal = document.getElementById("widgetModal");
   const elModalTitle = document.getElementById("modalTitle");
@@ -160,8 +175,315 @@
   const elWidgetCmdAlert = document.getElementById("widgetCmdAlert");
   const elWidgetCmdReset = document.getElementById("widgetCmdReset");
   const elControlConfigGroup = document.getElementById("controlConfigGroup");
+  let sirenAudio = null;
+  let sirenAudioUrl = "";
+  let sirenFileName = "";
+  let sirenAutoMode = false;
+  let sirenManualMuteUntilMs = 0;
+  let sirenToneCtx = null;
+  let sirenToneOsc = null;
+  let sirenToneLfo = null;
+  let sirenToneLfoGain = null;
+  let sirenToneGain = null;
+  let sirenAudioUnlocked = false;
 
   function setStatus(message) { elSaveStatus.textContent = message; }
+  function isSirenActive() {
+    const mp3On = !!sirenAudio && !sirenAudio.paused;
+    const toneOn = !!sirenToneOsc;
+    return mp3On || toneOn;
+  }
+  async function unlockSirenAudio() {
+    try {
+      if (!sirenToneCtx) sirenToneCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (sirenToneCtx.state === "suspended") await sirenToneCtx.resume();
+      sirenAudioUnlocked = true;
+      return true;
+    } catch (error) {
+      console.error(error);
+      return false;
+    }
+  }
+  function isDeviceOnline(deviceId) {
+    if (!deviceId) return false;
+    const device = appState.devices.find((d) => d.device_id === deviceId);
+    return !!device && device.status === "online";
+  }
+  function updateSirenBtn() {
+    if (!elSirenBtn) return;
+    const isOn = isSirenActive();
+    elSirenBtn.classList.toggle("active", isOn);
+    if (!sirenAudioUrl) {
+      elSirenBtn.title = "Pilih audio sirene (.mp3)";
+      elSirenBtn.setAttribute("aria-label", "Pilih audio sirene");
+      return;
+    }
+    const base = sirenFileName ? `Audio: ${sirenFileName}` : "Audio sirene siap";
+    const state = isOn ? "ON" : "OFF";
+    elSirenBtn.title = `${base} (${state})`;
+    elSirenBtn.setAttribute("aria-label", `${base} ${state}`);
+    refreshSirenControlButtons();
+  }
+  function refreshSirenControlButtons() {
+    const isOn = isSirenActive();
+    const buttons = document.querySelectorAll("[data-action='control'][data-cmd='alert']");
+    buttons.forEach((btn) => {
+      btn.textContent = isOn ? "Sirine ON" : "Sirine OFF";
+    });
+  }
+  async function startFallbackSirenTone() {
+    try {
+      const unlocked = await unlockSirenAudio();
+      if (!unlocked || !sirenToneCtx) {
+        setStatus("Klik sekali layar untuk mengizinkan audio otomatis.");
+        return false;
+      }
+      if (sirenToneOsc) return true;
+
+      sirenToneOsc = sirenToneCtx.createOscillator();
+      sirenToneLfo = sirenToneCtx.createOscillator();
+      sirenToneLfoGain = sirenToneCtx.createGain();
+      sirenToneGain = sirenToneCtx.createGain();
+
+      sirenToneOsc.type = "sawtooth";
+      sirenToneOsc.frequency.value = 680;
+      sirenToneLfo.type = "sine";
+      sirenToneLfo.frequency.value = 0.9;
+      sirenToneLfoGain.gain.value = 220;
+      sirenToneGain.gain.value = 0.05;
+
+      sirenToneLfo.connect(sirenToneLfoGain);
+      sirenToneLfoGain.connect(sirenToneOsc.frequency);
+      sirenToneOsc.connect(sirenToneGain);
+      sirenToneGain.connect(sirenToneCtx.destination);
+
+      sirenToneOsc.start();
+      sirenToneLfo.start();
+      updateSirenBtn();
+      return true;
+    } catch (error) {
+      console.error(error);
+      return false;
+    }
+  }
+  function updateSirenModeBtn() {
+    if (!elSirenModeBtn) return;
+    elSirenModeBtn.textContent = sirenAutoMode ? "Mode Sirine: Otomatis" : "Mode Sirine: Manual";
+    elSirenModeBtn.classList.toggle("active", sirenAutoMode);
+  }
+  function setSirenMode(enabled) {
+    sirenAutoMode = Boolean(enabled);
+    localStorage.setItem("siren-auto-mode", sirenAutoMode ? "1" : "0");
+    if (!sirenAutoMode) {
+      sirenManualMuteUntilMs = 0;
+    }
+    updateSirenModeBtn();
+    if (sirenAutoMode) {
+      evaluateAutoSiren();
+    }
+  }
+  function toggleSirenMode() {
+    setSirenMode(!sirenAutoMode);
+    setStatus(sirenAutoMode ? "Mode sirine otomatis aktif" : "Mode sirine manual aktif");
+  }
+  function getAutoSirenTrigger() {
+    for (const row of appState.sensorData) {
+      const water = Number(row?.water_level ?? 0);
+      const level = getFloodLevel(water);
+      const backendAlert = String(row?.alert_level || "").toLowerCase();
+      const byFrontendLevel = level.label === "AWAS" || level.label === "BAHAYA";
+      const byBackendAlert = backendAlert === "danger";
+      if ((byFrontendLevel || byBackendAlert) && isDeviceOnline(row.device_id)) {
+        return { row, level };
+      }
+    }
+    return null;
+  }
+  async function evaluateAutoSiren() {
+    if (!sirenAutoMode) return;
+    const trigger = getAutoSirenTrigger();
+    const sirenIsOn = isSirenActive();
+    const nowMs = Date.now();
+
+    if (!trigger) {
+      // Reset snooze saat kondisi sudah aman.
+      if (sirenManualMuteUntilMs > 0) sirenManualMuteUntilMs = 0;
+      if (sirenIsOn) {
+        stopSirenAudio();
+        setStatus("Auto sirine OFF (kondisi sudah aman)");
+      }
+      return;
+    }
+
+    if (sirenManualMuteUntilMs > nowMs) return;
+    if (sirenIsOn) return;
+
+    const ok = await playSirenAudio();
+    if (ok) {
+      setStatus(`Auto sirine ON: ${trigger.row.device_id} (${trigger.level.label})`);
+    }
+  }
+  function setSirenAudioSource(dataUrl, fileName = "siren.mp3") {
+    if (!dataUrl) return;
+    if (sirenAudioUrl && sirenAudioUrl.startsWith("blob:")) URL.revokeObjectURL(sirenAudioUrl);
+    sirenAudioUrl = dataUrl;
+    sirenFileName = fileName || "siren.mp3";
+    sirenAudio = new Audio(sirenAudioUrl);
+    sirenAudio.loop = true;
+    sirenAudio.preload = "auto";
+    sirenAudio.addEventListener("ended", updateSirenBtn);
+    sirenAudio.addEventListener("pause", updateSirenBtn);
+    sirenAudio.addEventListener("play", updateSirenBtn);
+    updateSirenBtn();
+  }
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+  async function uploadSirenAudio(file) {
+    const dataUrl = await readFileAsDataUrl(file);
+    const commaIdx = dataUrl.indexOf(",");
+    const header = commaIdx >= 0 ? dataUrl.slice(0, commaIdx) : "";
+    const base64Body = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : "";
+    const mimeFromDataUrl = (header.match(/^data:([^;]+);base64$/i) || [])[1] || "audio/mpeg";
+
+    const response = await fetch(`${API_BASE}/dashboard/siren-audio`, {
+      method: "POST",
+      headers: API_HEADERS,
+      body: JSON.stringify({
+        file_name: file.name || "siren.mp3",
+        mime_type: mimeFromDataUrl,
+        audio_base64: base64Body
+      })
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const validationMsg = json?.errors?.audio?.[0];
+      const msg = validationMsg || json?.error || `HTTP ${response.status}`;
+      throw new Error(msg);
+    }
+    return json;
+  }
+  async function loadSirenAudioFromServer() {
+    try {
+      const response = await fetch(`${API_BASE}/dashboard/siren-audio`, { headers: API_HEADERS });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const json = await response.json();
+      const audio = json?.audio;
+      if (audio?.data_url) {
+        setSirenAudioSource(audio.data_url, audio.file_name || "siren.mp3");
+        return audio;
+      } else {
+        updateSirenBtn();
+        return null;
+      }
+    } catch (error) {
+      console.error(error);
+      updateSirenBtn();
+      return null;
+    }
+  }
+  function handleSirenFileSelected(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const isMp3ByName = /\.mp3$/i.test(file.name || "");
+    if (!isMp3ByName) {
+      setStatus("Format audio harus MP3");
+      event.target.value = "";
+      return;
+    }
+    uploadSirenAudio(file)
+      .then(async (json) => {
+        let audio = json?.audio;
+        if (!audio?.data_url) {
+          audio = await loadSirenAudioFromServer();
+        }
+        if (audio?.data_url) {
+          setSirenAudioSource(audio.data_url, audio.file_name || file.name);
+          setStatus(`Audio sirene disimpan: ${audio.file_name || file.name}`);
+          return;
+        }
+
+        // Fallback: tetap pakai file lokal agar fitur jalan meski response server belum lengkap.
+        setSirenAudioSource(URL.createObjectURL(file), file.name);
+        setStatus("Audio dipakai lokal. Simpan server belum tervalidasi, coba refresh.");
+      })
+      .catch((error) => {
+        console.error(error);
+        setStatus(error?.message || "Gagal simpan audio sirene ke server");
+      })
+      .finally(() => {
+        event.target.value = "";
+      });
+  }
+  async function playSirenAudio() {
+    if (!sirenAudioUrl || !sirenAudio) {
+      const toneOk = await startFallbackSirenTone();
+      if (toneOk) {
+        setStatus("Sirine aktif (fallback tone, MP3 belum tersedia)");
+        return true;
+      }
+      setStatus("Pilih file MP3 untuk sirene dulu");
+      return false;
+    }
+    try {
+      await unlockSirenAudio();
+      sirenAudio.currentTime = 0;
+      await sirenAudio.play();
+      updateSirenBtn();
+      return true;
+    } catch (error) {
+      console.error(error);
+      const toneOk = await startFallbackSirenTone();
+      if (toneOk) return true;
+      setStatus("Gagal memutar audio sirene (izin autoplay belum ada)");
+      return false;
+    }
+  }
+  function stopSirenAudio() {
+    if (sirenAudio) {
+      sirenAudio.pause();
+      sirenAudio.currentTime = 0;
+    }
+    if (sirenToneOsc) {
+      try { sirenToneOsc.stop(); } catch (_) {}
+      try { sirenToneLfo.stop(); } catch (_) {}
+      sirenToneOsc.disconnect();
+      sirenToneLfo.disconnect();
+      sirenToneLfoGain.disconnect();
+      sirenToneGain.disconnect();
+      sirenToneOsc = null;
+      sirenToneLfo = null;
+      sirenToneLfoGain = null;
+      sirenToneGain = null;
+    }
+    updateSirenBtn();
+  }
+  async function toggleSirenAudioFromToolbar() {
+    if (!sirenAudioUrl) {
+      elSirenFileInput?.click();
+      return;
+    }
+    if (isSirenActive()) {
+      stopSirenAudio();
+      if (sirenAutoMode && getAutoSirenTrigger()) {
+        sirenManualMuteUntilMs = Date.now() + 30000; // snooze 30 detik
+      }
+      setStatus("Audio sirene dimatikan");
+      return;
+    }
+    const hasOnlineDevice = appState.devices.some((d) => d.status === "online");
+    if (!hasOnlineDevice) {
+      setStatus("Audio sirene hanya bisa dinyalakan saat ada device online");
+      return;
+    }
+    const ok = await playSirenAudio();
+    if (ok) setStatus("Audio sirene dinyalakan");
+  }
   function normalizeWidget(widget) { return defaultWidget({ ...widget, id: widget.id || generateId() }); }
   function hexToRgba(hex, alpha) {
     const clean = String(hex || "#ef4444").replace("#", "");
@@ -361,6 +683,54 @@
     }).join("") + `</div>`;
   }
 
+  function renderWaterHistoryHtml(widget, limit = 60) {
+    const rows = getWidgetRows(widget).slice(0, limit);
+    const deviceOptions = [
+      `<option value="" ${!widget.device_id ? "selected" : ""}>Semua perangkat</option>`,
+      ...appState.devices.map((d) => {
+        const selected = widget.device_id === d.device_id ? "selected" : "";
+        const label = d.name ? `${d.device_id} — ${d.name}` : d.device_id;
+        return `<option value="${d.device_id}" ${selected}>${label}</option>`;
+      }),
+    ].join("");
+    if (!rows.length) {
+      return `
+        <div class="chart-widget">
+          <div class="chart-toolbar">
+            <label class="chart-label">Perangkat</label>
+            <select class="chart-device-select" data-action="water-history-device-select" data-id="${widget.id}">
+              ${deviceOptions}
+            </select>
+          </div>
+          <div class="device-status-empty">Belum ada riwayat ketinggian air.</div>
+        </div>
+      `;
+    }
+    return `
+      <div class="chart-widget">
+        <div class="chart-toolbar">
+          <label class="chart-label">Perangkat</label>
+          <select class="chart-device-select" data-action="water-history-device-select" data-id="${widget.id}">
+            ${deviceOptions}
+          </select>
+        </div>
+        <div class="alerts-list">
+          ${rows.map((r) => {
+            const ts = r.created_at ? new Date(r.created_at).toLocaleString("id-ID") : "-";
+            const water = Number(r.water_level ?? 0);
+            const rain = Number(r.rainfall ?? 0);
+            const level = getFloodLevel(water);
+            return `<div class="alerts-item">
+              <div class="alerts-top"><span class="alerts-dev">${r.device_id || "—"}</span><span class="alerts-time">${ts}</span></div>
+              <div class="alerts-action">Tinggi Air: <b>${water.toFixed(1)} cm</b> • Curah Hujan: ${rain.toFixed(1)} mm/h</div>
+              <div class="alerts-detail">Status: <span style="color:${level.color};font-weight:700;">${level.label}</span></div>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>
+    `;
+  }
+
   function renderCommandHistoryHtml(limit = 20) {
     const items = (appState.commands || []).slice(0, limit);
     if (!items.length) return `<div class="device-status-empty">Belum ada command.</div>`;
@@ -450,6 +820,13 @@
     return `<div class="widget-header"><h4 class="widget-title"><span>${widget.title || widget.type.toUpperCase()}</span><span class="widget-meta">${getDeviceLabel(widget)}</span></h4><div class="widget-actions"><button class="icon-btn" data-action="edit" data-id="${widget.id}" title="Edit" aria-label="Edit widget"><svg class="widget-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"/></svg></button><button class="icon-btn" data-action="delete" data-id="${widget.id}" title="Hapus" aria-label="Hapus widget">X</button></div></div>`;
   }
 
+  function refreshWidgetHeaderMeta(widget) {
+    const root = document.querySelector(`.grid-stack-item-content[data-id="${widget.id}"]`);
+    const meta = root?.querySelector(".widget-title .widget-meta");
+    if (!meta) return;
+    meta.textContent = getDeviceLabel(widget);
+  }
+
   function renderWidgetBody(widget) {
     if (widget.type === "level") {
       const th = getThresholds();
@@ -487,18 +864,25 @@
 
     if (widget.type === "control_panel") {
       const opts = appState.devices.length
-        ? appState.devices.map(d => `<option value="${d.device_id}">${[d.device_id, d.name].filter(Boolean).join(" — ")}</option>`).join("")
+        ? appState.devices.map((d) => {
+            const selected = widget.device_id === d.device_id ? "selected" : "";
+            return `<option value="${d.device_id}" ${selected}>${[d.device_id, d.name].filter(Boolean).join(" — ")}</option>`;
+          }).join("")
         : `<option value="">Belum ada perangkat</option>`;
       return `<div class="widget-body"><div class="control-panel" data-id="${widget.id}">
-        <select class="control-select" data-role="device">${opts}</select>
+        <select class="control-select" data-role="device" data-action="control-device-select" data-id="${widget.id}">${opts}</select>
         <div class="control-grid">
           <button class="btn success control-btn" data-action="control" data-cmd="on" data-id="${widget.id}">Aktifkan</button>
           <button class="btn danger control-btn" data-action="control" data-cmd="off" data-id="${widget.id}">Nonaktifkan</button>
-          <button class="btn secondary control-btn" data-action="control" data-cmd="alert" data-id="${widget.id}">Sirine</button>
+          <button class="btn secondary control-btn" data-action="control" data-cmd="alert" data-id="${widget.id}">${(sirenAudio && !sirenAudio.paused) ? "Sirine ON" : "Sirine OFF"}</button>
           <button class="btn secondary control-btn" data-action="control" data-cmd="reset" data-id="${widget.id}">Reset</button>
         </div>
         <div class="hint-text control-result" data-role="result"></div>
       </div></div>`;
+    }
+
+    if (widget.type === "water_history") {
+      return `<div class="widget-body">${renderWaterHistoryHtml(widget)}</div>`;
     }
 
     if (widget.type === "command_history") {
@@ -641,7 +1025,7 @@
 
   async function fetchDashboardData() {
     try {
-      const response = await fetch(`${API_BASE}/dashboard/data?chart_limit=60`, { headers: API_HEADERS });
+      const response = await fetch(`${API_BASE}/dashboard/data?chart_limit=60&online_timeout=12`, { headers: API_HEADERS });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const json = await response.json();
       appState.sensorData = json.latest_data || [];
@@ -683,6 +1067,7 @@
       if (widget.type === "level") continue;
       if (widget.type === "chart_device") {
         syncChartDeviceSelect(widget);
+        refreshWidgetHeaderMeta(widget);
         initOrUpdateChart(widget);
         continue;
       }
@@ -690,6 +1075,12 @@
 
       if (widget.type === "command_history") {
         root.querySelector(".widget-body").innerHTML = renderCommandHistoryHtml();
+        continue;
+      }
+
+      if (widget.type === "water_history") {
+        root.querySelector(".widget-body").innerHTML = renderWaterHistoryHtml(widget);
+        refreshWidgetHeaderMeta(widget);
         continue;
       }
 
@@ -709,11 +1100,15 @@
             // keep previous selection if still exists
             if (prev && appState.devices.some((d) => d.device_id === prev)) {
               sel.value = prev;
+            } else if (widget.device_id && appState.devices.some((d) => d.device_id === widget.device_id)) {
+              sel.value = widget.device_id;
             }
           } else {
             sel.innerHTML = `<option value="">Belum ada perangkat</option>`;
           }
         }
+        refreshWidgetHeaderMeta(widget);
+        refreshSirenControlButtons();
         continue;
       }
 
@@ -742,6 +1137,7 @@
         continue;
       }
     }
+    evaluateAutoSiren();
   }
 
   function updateModalVisibilityByType() {
@@ -815,8 +1211,8 @@
     } else {
       payload.x = 0;
       payload.y = 0;
-      payload.w = payload.type === "chart_device" ? 6 : 3;
-      payload.h = payload.type === "chart_device" ? 4 : 3;
+      payload.w = (payload.type === "chart_device" || payload.type === "water_history") ? 6 : 3;
+      payload.h = (payload.type === "chart_device" || payload.type === "water_history") ? 4 : 3;
       appState.widgets.push(payload);
       appState.grid.addWidget(createWidgetNode(payload), {
         w: payload.w,
@@ -953,7 +1349,13 @@
   }
 
   function setupEvents() {
+    const armAudio = () => { unlockSirenAudio(); };
+    window.addEventListener("pointerdown", armAudio, { once: true });
+    window.addEventListener("keydown", armAudio, { once: true });
     elThemeBtn.addEventListener("click", toggleTheme);
+    elSirenBtn.addEventListener("click", toggleSirenAudioFromToolbar);
+    elSirenModeBtn.addEventListener("click", toggleSirenMode);
+    elSirenFileInput.addEventListener("change", handleSirenFileSelected);
     document.getElementById("addWidgetBtn").addEventListener("click", () => openModal(null));
     document.getElementById("resetBtn").addEventListener("click", resetLayout);
     document.getElementById("lockBtn").addEventListener("click", toggleLockLayout);
@@ -996,7 +1398,32 @@
           : cmdKey === "alert" ? widget.commandAlert
           : widget.commandReset;
 
+        if (cmdKey === "alert" && !isDeviceOnline(deviceId)) {
+          if (result) result.textContent = `Device ${deviceId} offline. Sirine hanya untuk device online.`;
+          setStatus(`Sirine ditolak: ${deviceId} offline`);
+          return;
+        }
+
+        if (cmdKey === "alert") {
+          const sirenIsOn = isSirenActive();
+          if (sirenIsOn) {
+            stopSirenAudio();
+            if (sirenAutoMode && getAutoSirenTrigger()) {
+              sirenManualMuteUntilMs = Date.now() + 30000; // snooze 30 detik
+            }
+            if (result) result.textContent = `Sirine OFF untuk ${deviceId}`;
+            setStatus(`Sirine dimatikan (${deviceId})`);
+            return;
+          }
+        }
+
         const ok = await sendDeviceCommand(deviceId, cmd);
+        if (ok && cmdKey === "alert") {
+          await playSirenAudio();
+        }
+        if (ok && (cmdKey === "off" || cmdKey === "reset")) {
+          stopSirenAudio();
+        }
         if (result) result.textContent = ok ? `Perintah '${cmd}' dikirim ke ${deviceId}` : `Gagal kirim '${cmd}'`;
       }
     });
@@ -1014,15 +1441,42 @@
 
     elGrid.addEventListener("change", (event) => {
       const select = event.target.closest("[data-action='chart-device-select']");
-      if (!select) return;
+      if (select) {
+        const widgetId = select.dataset.id;
+        const widget = appState.widgets.find((w) => String(w.id) === String(widgetId));
+        if (!widget) return;
 
-      const widgetId = select.dataset.id;
-      const widget = appState.widgets.find((w) => String(w.id) === String(widgetId));
-      if (!widget) return;
+        widget.device_id = select.value || "";
+        refreshWidgetHeaderMeta(widget);
+        destroyWidgetChart(widget.id);
+        initOrUpdateChart(widget);
+        queueSaveLayout();
+        return;
+      }
 
-      widget.device_id = select.value || "";
-      destroyWidgetChart(widget.id);
-      initOrUpdateChart(widget);
+      const controlSelect = event.target.closest("[data-action='control-device-select']");
+      if (controlSelect) {
+        const controlWidgetId = controlSelect.dataset.id;
+        const controlWidget = appState.widgets.find((w) => String(w.id) === String(controlWidgetId));
+        if (!controlWidget) return;
+
+        controlWidget.device_id = controlSelect.value || "";
+        refreshWidgetHeaderMeta(controlWidget);
+        queueSaveLayout();
+        return;
+      }
+
+      const waterHistorySelect = event.target.closest("[data-action='water-history-device-select']");
+      if (!waterHistorySelect) return;
+
+      const waterWidgetId = waterHistorySelect.dataset.id;
+      const waterWidget = appState.widgets.find((w) => String(w.id) === String(waterWidgetId));
+      if (!waterWidget) return;
+
+      waterWidget.device_id = waterHistorySelect.value || "";
+      refreshWidgetHeaderMeta(waterWidget);
+      const root = document.querySelector(`.grid-stack-item-content[data-id="${waterWidget.id}"]`);
+      if (root) root.querySelector(".widget-body").innerHTML = renderWaterHistoryHtml(waterWidget);
       queueSaveLayout();
     });
 
@@ -1039,6 +1493,9 @@
 
   async function boot() {
     detectTheme();
+    const savedAutoMode = localStorage.getItem("siren-auto-mode");
+    setSirenMode(savedAutoMode === null ? true : savedAutoMode === "1");
+    updateSirenBtn();
     appState.grid = GridStack.init({
       column: 12,
       cellHeight: 90,
@@ -1052,12 +1509,14 @@
     const savedLocked = localStorage.getItem("dashboard-layout-locked") === "1";
     setLockState(savedLocked);
     await fetchDashboardData();
+    await loadSirenAudioFromServer();
     await loadLayout();
     setLockState(savedLocked);
     await fetchDashboardData();
     await fetchLogs();
     setInterval(fetchDashboardData, 5000);
     setInterval(fetchLogs, 5000);
+    setInterval(() => { evaluateAutoSiren(); }, 1000);
   }
   boot();
 </script>

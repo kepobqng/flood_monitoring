@@ -6,6 +6,7 @@ use App\Http\Controllers\CommandController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DashboardLayoutController;
 use App\Http\Controllers\WorkerStatusController;
+use App\Http\Controllers\SirenAudioController;
 
 Route::middleware('apikey')->group(function () {
     Route::post('/ingest', [SensorController::class, 'ingest']);
@@ -22,4 +23,8 @@ Route::middleware('apikey')->group(function () {
     Route::get('/dashboard/layout', [DashboardLayoutController::class, 'index']);
     Route::post('/dashboard/layout', [DashboardLayoutController::class, 'store']);
     Route::delete('/dashboard/layout', [DashboardLayoutController::class, 'destroy']);
+
+    Route::get('/dashboard/siren-audio', [SirenAudioController::class, 'show']);
+    Route::post('/dashboard/siren-audio', [SirenAudioController::class, 'store']);
+    Route::delete('/dashboard/siren-audio', [SirenAudioController::class, 'destroy']);
 });

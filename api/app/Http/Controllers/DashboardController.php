@@ -13,7 +13,7 @@ class DashboardController extends Controller
     public function data(Request $request)
     {
         $chartLimit = min(max((int) $request->query('chart_limit', 40), 5), 120);
-        $onlineTimeoutSeconds = min(max((int) $request->query('online_timeout', 30), 5), 600);
+        $onlineTimeoutSeconds = min(max((int) $request->query('online_timeout', 12), 5), 600);
         
         // Ensure known simulator devices are always visible on dashboard
         foreach (['DEV001', 'DEV002', 'DEV003'] as $devId) {
@@ -60,22 +60,28 @@ class DashboardController extends Controller
         $onlineThreshold = now()->subSeconds($onlineTimeoutSeconds);
         $devices = $devices->map(function ($device) use ($lastSeenByDevice, $onlineThreshold) {
             $lastSeenAt = $lastSeenByDevice[$device->device_id] ?? null;
-            $computedStatus = 'offline';
-            $lastCommand = Command::where('device_id', $device->device_id)
+            $lastCommandRow = Command::where('device_id', $device->device_id)
                 ->where('status', 'executed')
                 ->latest('id')
-                ->value('command');
+                ->first(['command', 'created_at']);
+            $lastCommand = $lastCommandRow?->command;
+            $lastCommandAt = $lastCommandRow?->created_at;
 
-            // Command state has priority so panel control feels immediate.
+            $hasRecentTelemetry = $lastSeenAt !== null
+                && Carbon::parse($lastSeenAt)->gte($onlineThreshold);
+            $computedStatus = $hasRecentTelemetry ? 'online' : 'offline';
+
+            // Keep immediate control feedback for start command.
             if ($lastCommand === 'start') {
                 $computedStatus = 'online';
             } elseif (in_array($lastCommand, ['stop', 'reset'], true)) {
-                $computedStatus = 'offline';
-            }
-
-            // Fallback to telemetry heartbeat when there is no recent command state.
-            if ($lastSeenAt !== null && $lastCommand === null) {
-                $computedStatus = Carbon::parse($lastSeenAt)->gte($onlineThreshold) ? 'online' : 'offline';
+                // If there is new telemetry after stop/reset, device should be online again.
+                if ($lastSeenAt !== null && $lastCommandAt !== null) {
+                    $seenAfterStop = Carbon::parse($lastSeenAt)->gt(Carbon::parse($lastCommandAt));
+                    $computedStatus = ($seenAfterStop && $hasRecentTelemetry) ? 'online' : 'offline';
+                } else {
+                    $computedStatus = 'offline';
+                }
             }
 
             $device->status = $computedStatus;
