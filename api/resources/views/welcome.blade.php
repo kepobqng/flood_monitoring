@@ -46,6 +46,8 @@
           <option value="chart_device">Grafik per Perangkat</option>
           <option value="device_status">Status Perangkat</option>
           <option value="control_panel">Panel Kontrol</option>
+          <option value="command_history">Riwayat Command</option>
+          <option value="worker_status">Status Worker</option>
           <option value="stat_online">Device Online</option>
           <option value="stat_avg">Rata-rata Ketinggian</option>
           <option value="stat_max">Status Tertinggi</option>
@@ -126,7 +128,7 @@
 
   const DEFAULT_LAYOUT = [];
 
-  const appState = { grid: null, widgets: [], charts: new Map(), sensorData: [], devices: [], logs: [], locked: false, saveTimer: null, editId: null };
+  const appState = { grid: null, widgets: [], charts: new Map(), sensorData: [], devices: [], logs: [], commands: [], workerStatuses: [], locked: false, saveTimer: null, editId: null };
 
   const elGrid = document.getElementById("dashboardGrid");
   const elSaveStatus = document.getElementById("saveStatus");
@@ -359,6 +361,47 @@
     }).join("") + `</div>`;
   }
 
+  function renderCommandHistoryHtml(limit = 20) {
+    const items = (appState.commands || []).slice(0, limit);
+    if (!items.length) return `<div class="device-status-empty">Belum ada command.</div>`;
+    return `
+      <div class="alerts-list">
+        ${items.map((c) => {
+          const ts = c.created_at ? new Date(c.created_at).toLocaleString("id-ID") : "-";
+          const dev = c.device_id || "—";
+          const cmd = c.command || "—";
+          const st = c.status || "—";
+          return `<div class="alerts-item">
+            <div class="alerts-top"><span class="alerts-dev">${dev}</span><span class="alerts-time">${ts}</span></div>
+            <div class="alerts-action">command: <b>${cmd}</b></div>
+            <div class="alerts-detail">status: ${st}</div>
+          </div>`;
+        }).join("")}
+      </div>
+    `;
+  }
+
+  function renderWorkerStatusHtml(limit = 30) {
+    const items = (appState.workerStatuses || []).slice(0, limit);
+    if (!items.length) return `<div class="device-status-empty">Belum ada status worker.</div>`;
+    return `
+      <div class="alerts-list">
+        ${items.map((w) => {
+          const ts = w.last_heartbeat_at ? new Date(w.last_heartbeat_at).toLocaleString("id-ID") : (w.updated_at ? new Date(w.updated_at).toLocaleString("id-ID") : "-");
+          const worker = w.worker_id || "—";
+          const dev = w.device_id || "—";
+          const st = w.status || "—";
+          const msg = w.message || "";
+          return `<div class="alerts-item">
+            <div class="alerts-top"><span class="alerts-dev">${worker}</span><span class="alerts-time">${ts}</span></div>
+            <div class="alerts-action">${dev} • <b>${st}</b></div>
+            <div class="alerts-detail">${msg}</div>
+          </div>`;
+        }).join("")}
+      </div>
+    `;
+  }
+
   function renderSystemStatusHtml() {
     const online = appState.devices.filter((d) => d.status === "online").length;
     const total = appState.devices.length;
@@ -456,6 +499,14 @@
         </div>
         <div class="hint-text control-result" data-role="result"></div>
       </div></div>`;
+    }
+
+    if (widget.type === "command_history") {
+      return `<div class="widget-body">${renderCommandHistoryHtml()}</div>`;
+    }
+
+    if (widget.type === "worker_status") {
+      return `<div class="widget-body">${renderWorkerStatusHtml()}</div>`;
     }
 
     if (widget.type === "stat_online") {
@@ -595,6 +646,8 @@
       const json = await response.json();
       appState.sensorData = json.latest_data || [];
       appState.devices = json.devices || [];
+      appState.commands = json.commands || [];
+      appState.workerStatuses = json.worker_statuses || [];
 
       refreshWidgetValues();
       if (!elWidgetModal.classList.contains("show")) refreshDeviceSelect();
@@ -634,6 +687,16 @@
         continue;
       }
       if (widget.type === "device_status") { root.querySelector(".device-status-wrap").innerHTML = renderDeviceStatusHtml(); continue; }
+
+      if (widget.type === "command_history") {
+        root.querySelector(".widget-body").innerHTML = renderCommandHistoryHtml();
+        continue;
+      }
+
+      if (widget.type === "worker_status") {
+        root.querySelector(".widget-body").innerHTML = renderWorkerStatusHtml();
+        continue;
+      }
 
       if (widget.type === "control_panel") {
         const sel = root.querySelector("select[data-role='device']");

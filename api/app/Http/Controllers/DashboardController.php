@@ -5,6 +5,7 @@ use App\Models\SensorData;
 use App\Models\Device;
 use App\Models\ActivityLog;
 use App\Models\Command;
+use App\Models\WorkerStatus;
 use Carbon\Carbon;
 
 class DashboardController extends Controller
@@ -89,6 +90,7 @@ class DashboardController extends Controller
             'chart_device'    => $chartDevice,
             'chart_readings_by_device' => $chartReadingsByDevice,
             'commands'        => Command::latest()->take(10)->get(),
+            'worker_statuses' => WorkerStatus::orderByDesc('last_heartbeat_at')->take(30)->get(),
             'online_timeout'  => $onlineTimeoutSeconds,
         ]);
     }

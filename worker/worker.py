@@ -1,8 +1,31 @@
 import time
 import requests
+import os
 
-API_BASE = "http://flood_monitoring.test/api"
-API_KEY = "FLOOD-SECRET-KEY-2025"
+API_KEY = os.getenv("FLOOD_API_KEY", "FLOOD-SECRET-KEY-2025")
+
+
+def resolve_api_base(api_key: str) -> str:
+    env_base = (os.getenv("FLOOD_API_BASE") or "").strip().rstrip("/")
+    candidates = [env_base] if env_base else []
+    candidates += ["http://127.0.0.1:8000/api", "http://flood_monitoring.test/api"]
+
+    seen = set()
+    for base in candidates:
+        base = (base or "").strip().rstrip("/")
+        if not base or base in seen:
+            continue
+        seen.add(base)
+        try:
+            requests.get(f"{base}/dashboard/data", headers={"X-API-KEY": api_key}, timeout=2.5)
+            return base
+        except Exception:
+            continue
+
+    return env_base or "http://127.0.0.1:8000/api"
+
+
+API_BASE = resolve_api_base(API_KEY)
 WORKER_ID = "worker-main"
 DEVICE_IDS = ["DEV001", "DEV002", "DEV003"]
 POLL_INTERVAL_SECONDS = 3
