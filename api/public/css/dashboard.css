@@ -116,9 +116,11 @@ html[data-theme="dark"] .gauge { background: conic-gradient(#22c55e 0deg, #33415
   border-radius: 999px;
   border: 1px solid var(--border);
 }
+.badge-normal { background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.35); color: #3b82f6; }
 .badge-aman { background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.35); color: #22c55e; }
 .badge-siaga { background: rgba(249,115,22,0.12); border-color: rgba(249,115,22,0.35); color: #f97316; }
 .badge-awas { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.35); color: #f59e0b; }
+.badge-awas-hi { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.35); color: #ef4444; }
 .badge-bahaya { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.35); color: #ef4444; }
 
 .statbox { width: 100%; }

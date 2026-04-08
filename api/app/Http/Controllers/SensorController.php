@@ -16,8 +16,8 @@ class SensorController extends Controller
         ]);
 
         $alert = 'normal';
-        if ($data['water_level'] > 150) $alert = 'danger';
-        elseif ($data['water_level'] > 80) $alert = 'warning';
+        if ($data['water_level'] > 200) $alert = 'danger';
+        elseif ($data['water_level'] >= 101) $alert = 'warning';
 
         $data['alert_level'] = $alert;
 

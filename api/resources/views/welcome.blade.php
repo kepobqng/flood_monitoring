@@ -115,10 +115,9 @@
     </div>
 
     <div class="field-grid" id="thresholdConfigGroup">
-      <div class="field"><label for="thAmanMax">AMAN &lt;</label><input id="thAmanMax" type="number" value="50" min="0" /></div>
-      <div class="field"><label for="thSiagaMax">SIAGA ≤</label><input id="thSiagaMax" type="number" value="100" min="0" /></div>
-      <div class="field"><label for="thAwasMax">AWAS ≤</label><input id="thAwasMax" type="number" value="150" min="0" /></div>
-      <div class="field"><label>BAHAYA</label><input type="text" value="> 150" disabled /></div>
+      <div class="field"><label for="thAmanMax">Normal — air &lt; (cm)</label><input id="thAmanMax" type="number" value="101" min="1" step="1" /></div>
+      <div class="field"><label for="thSiagaMax">Siaga — hingga (cm)</label><input id="thSiagaMax" type="number" value="200" min="1" step="1" /></div>
+      <div class="field"><label>Awas</label><input type="text" value="&gt; batas siaga (cm)" disabled /></div>
     </div>
 
     <div class="field-grid" id="mapConfigGroup" style="display:none"></div>
@@ -170,7 +169,6 @@
   const elThresholdConfigGroup = document.getElementById("thresholdConfigGroup");
   const elThAmanMax = document.getElementById("thAmanMax");
   const elThSiagaMax = document.getElementById("thSiagaMax");
-  const elThAwasMax = document.getElementById("thAwasMax");
   const elMapConfigGroup = document.getElementById("mapConfigGroup");
   const elWidgetCmdAlert = document.getElementById("widgetCmdAlert");
   const elWidgetCmdReset = document.getElementById("widgetCmdReset");
@@ -291,7 +289,7 @@
       const water = Number(row?.water_level ?? 0);
       const level = getFloodLevel(water);
       const backendAlert = String(row?.alert_level || "").toLowerCase();
-      const byFrontendLevel = level.label === "AWAS" || level.label === "BAHAYA";
+      const byFrontendLevel = level.label === "AWAS";
       const byBackendAlert = backendAlert === "danger";
       if ((byFrontendLevel || byBackendAlert) && isDeviceOnline(row.device_id)) {
         return { row, level };
@@ -484,13 +482,118 @@
     const ok = await playSirenAudio();
     if (ok) setStatus("Audio sirene dinyalakan");
   }
-  function normalizeWidget(widget) { return defaultWidget({ ...widget, id: widget.id || generateId() }); }
+  function normalizeWidget(widget) {
+    const w = defaultWidget({ ...widget, id: widget.id || generateId() });
+    if (w.type === "level") {
+      const a = Number(w.thAmanMax);
+      const b = Number(w.thSiagaMax);
+      const oldDefault = a === 50 && b === 100;
+      if (oldDefault || !Number.isFinite(a) || !Number.isFinite(b) || a >= b) {
+        w.thAmanMax = 101;
+        w.thSiagaMax = 200;
+      }
+    }
+    return w;
+  }
   function hexToRgba(hex, alpha) {
     const clean = String(hex || "#ef4444").replace("#", "");
     if (clean.length !== 6) return `rgba(239,68,68,${alpha})`;
     const r = parseInt(clean.slice(0, 2), 16), g = parseInt(clean.slice(2, 4), 16), b = parseInt(clean.slice(4, 6), 16);
     return `rgba(${r},${g},${b},${alpha})`;
   }
+  function computeChartYMax(datasets, th) {
+    let maxVal = 0;
+    for (const ds of datasets) {
+      for (const v of ds.data) {
+        if (v == null || v === "") continue;
+        const n = Number(v);
+        if (Number.isFinite(n)) maxVal = Math.max(maxVal, n);
+      }
+    }
+    const thTop = Math.max(Number(th.normalCeil) || 0, Number(th.siagaMax) || 0);
+    return Math.ceil(Math.max(maxVal * 1.12, thTop * 1.12, 20));
+  }
+  function segmentBorderByLevel(ctx, fallbackColor) {
+    const v = ctx.p1.parsed.y;
+    if (v == null || !Number.isFinite(v)) return fallbackColor;
+    const t = getThresholds();
+    if (v > t.siagaMax) return "#ef4444";
+    if (v >= t.normalCeil) return "#f97316";
+    return "#3b82f6";
+  }
+  function lineGradientFill(context, lineColor) {
+    const chart = context.chart;
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return hexToRgba(lineColor, 0.22);
+    const g = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+    g.addColorStop(0, hexToRgba(lineColor, 0.4));
+    g.addColorStop(1, hexToRgba(lineColor, 0.05));
+    return g;
+  }
+  const floodChartThresholdPlugin = {
+    id: "floodChartThresholds",
+    beforeDatasetsDraw(chart) {
+      const th = getThresholds();
+      const y = chart.scales.y;
+      const { ctx, chartArea } = chart;
+      if (!y || !chartArea) return;
+      const dark = document.documentElement.dataset.theme === "dark";
+      const zones = [
+        { lo: Math.max(0, y.min), hi: th.normalCeil, fill: dark ? "rgba(59,130,246,0.14)" : "rgba(59,130,246,0.22)" },
+        { lo: th.normalCeil, hi: th.siagaMax, fill: dark ? "rgba(249,115,22,0.12)" : "rgba(249,115,22,0.16)" },
+        { lo: th.siagaMax, hi: y.max, fill: dark ? "rgba(239,68,68,0.15)" : "rgba(239,68,68,0.18)" },
+      ];
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height);
+      ctx.clip();
+      for (const z of zones) {
+        const pLo = y.getPixelForValue(z.lo);
+        const pHi = y.getPixelForValue(z.hi);
+        const top = Math.min(pLo, pHi);
+        const bottom = Math.max(pLo, pHi);
+        const adjTop = Math.max(chartArea.top, top);
+        const adjBottom = Math.min(chartArea.bottom, bottom);
+        if (adjBottom <= adjTop) continue;
+        ctx.fillStyle = z.fill;
+        ctx.fillRect(chartArea.left, adjTop, chartArea.width, adjBottom - adjTop);
+      }
+      ctx.restore();
+    },
+    afterDatasetsDraw(chart) {
+      const th = getThresholds();
+      const y = chart.scales.y;
+      const { ctx, chartArea } = chart;
+      if (!y || !chartArea) return;
+      const dark = document.documentElement.dataset.theme === "dark";
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = dark ? "rgba(255,255,255,0.32)" : "rgba(0,0,0,0.18)";
+      for (const v of [th.normalCeil, th.siagaMax]) {
+        if (v < y.min || v > y.max) continue;
+        const py = y.getPixelForValue(v);
+        if (py < chartArea.top || py > chartArea.bottom) continue;
+        ctx.beginPath();
+        ctx.moveTo(chartArea.left, py);
+        ctx.lineTo(chartArea.right, py);
+        ctx.stroke();
+      }
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = dark ? "rgba(156,163,175,0.9)" : "rgba(75,85,99,0.8)";
+      const meta0 = chart.getDatasetMeta(0);
+      const len = meta0?.data?.length;
+      const pt = len ? meta0.data[len - 1] : null;
+      if (pt && Number.isFinite(pt.x)) {
+        ctx.beginPath();
+        ctx.moveTo(pt.x, chartArea.top);
+        ctx.lineTo(pt.x, chartArea.bottom);
+        ctx.stroke();
+      }
+      ctx.restore();
+    },
+  };
 
   function detectTheme() {
     const theme = localStorage.getItem("dashboard-theme") || "light";
@@ -536,27 +639,27 @@
   }
   function getThresholds() {
     const fromLevelWidget = appState.widgets.find((w) => w.type === "level");
-    const aman = Number(fromLevelWidget?.thAmanMax ?? 50);
-    const siaga = Number(fromLevelWidget?.thSiagaMax ?? 100);
-    const awas = Number(fromLevelWidget?.thAwasMax ?? 150);
-    return {
-      aman: Number.isFinite(aman) ? aman : 50,
-      siaga: Number.isFinite(siaga) ? siaga : 100,
-      awas: Number.isFinite(awas) ? awas : 150,
-    };
+    const normalCeil = Number(fromLevelWidget?.thAmanMax ?? 101);
+    const siagaMax = Number(fromLevelWidget?.thSiagaMax ?? 200);
+    const n = Number.isFinite(normalCeil) ? normalCeil : 101;
+    const s = Number.isFinite(siagaMax) ? siagaMax : 200;
+    return n < s ? { normalCeil: n, siagaMax: s } : { normalCeil: 101, siagaMax: 200 };
   }
 
   function getFloodLevel(value) {
     const water = Number(value || 0);
     const th = getThresholds();
-    if (water > th.awas) return { label: "BAHAYA", color: "#ef4444" };
-    if (water > th.siaga) return { label: "AWAS", color: "#f59e0b" };
-    if (water > th.aman) return { label: "SIAGA", color: "#f97316" };
-    return { label: "AMAN", color: "#22c55e" };
+    if (water > th.siagaMax) return { label: "AWAS", color: "#ef4444" };
+    if (water >= th.normalCeil) return { label: "SIAGA", color: "#f97316" };
+    return { label: "NORMAL", color: "#3b82f6" };
   }
-  function getChartSeries(widget, limit = 30) {
-    const rows = getWidgetRows(widget).slice(0, limit).reverse();
-    return { labels: rows.map((r) => new Date(r.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })), data: rows.map((r) => Number(r[widget.field] ?? 0)) };
+  function getChartSeries(widget, limit = 60) {
+    const points = Math.min(300, Math.max(10, Number(limit)));
+    const rows = getWidgetRows(widget).slice(0, points).reverse();
+    return {
+      labels: rows.map((r) => new Date(r.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })),
+      data: rows.map((r) => Number(r[widget.field || "water_level"] ?? 0)),
+    };
   }
   function getDeviceLabel(widget) {
     if (!widget.device_id) return "Semua";
@@ -787,16 +890,13 @@
   }
 
   function renderThresholdSettingsHtml(widget) {
-    const aman = Number(widget.thAmanMax ?? 50);
-    const siaga = Number(widget.thSiagaMax ?? 100);
-    const awas = Number(widget.thAwasMax ?? 150);
+    const th = getThresholds();
     return `
       <div class="threshold-box">
-        <div class="system-row"><span>AMAN &lt;</span><b>${aman} cm</b></div>
-        <div class="system-row"><span>SIAGA ≤</span><b>${siaga} cm</b></div>
-        <div class="system-row"><span>AWAS ≤</span><b>${awas} cm</b></div>
-        <div class="system-row"><span>BAHAYA</span><b>&gt; ${awas} cm</b></div>
-        <div class="hint-text" style="margin-top:8px;">Ubah nilai lewat menu Edit Widget.</div>
+        <div class="system-row"><span>Normal</span><b>air &lt; ${th.normalCeil} cm</b></div>
+        <div class="system-row"><span>Siaga</span><b>${th.normalCeil} – ${th.siagaMax} cm</b></div>
+        <div class="system-row"><span>Awas</span><b>air &gt; ${th.siagaMax} cm</b></div>
+        <div class="hint-text" style="margin-top:8px;">Ubah nilai lewat menu Edit Widget (widget Level).</div>
       </div>
     `;
   }
@@ -831,7 +931,7 @@
     if (widget.type === "level") {
       const th = getThresholds();
       return `<div class="widget-body"><div class="level-bar">
-        <div class="level-row"><span class="badge badge-aman">AMAN &lt; ${th.aman}cm</span><span class="badge badge-siaga">SIAGA ${th.aman}–${th.siaga}cm</span><span class="badge badge-awas">AWAS ${th.siaga}–${th.awas}cm</span><span class="badge badge-bahaya">BAHAYA &gt; ${th.awas}cm</span></div>
+        <div class="level-row"><span class="badge badge-normal">NORMAL &lt; ${th.normalCeil} cm</span><span class="badge badge-siaga">SIAGA ${th.normalCeil}–${th.siagaMax} cm</span><span class="badge badge-awas-hi">AWAS &gt; ${th.siagaMax} cm</span></div>
       </div></div>`;
     }
 
@@ -923,10 +1023,13 @@
     if (!canvas) return;
     const existing = appState.charts.get(widget.id);
     const dark = document.documentElement.dataset.theme === "dark";
-    const color = widget.chartColor || "#ef4444";
+    const tickColor = dark ? "#9ca3af" : "#374151";
+    const gridColor = dark ? "#374151" : "#e5e7eb";
+    const color = widget.chartColor || "#38bdf8";
 
     const points = Math.min(300, Math.max(10, Number(widget.chartPoints ?? 60)));
     const mode = widget.chartMode || "single";
+    const th = getThresholds();
 
     let labels = [];
     let datasets = [];
@@ -939,31 +1042,81 @@
         const s = getChartSeries(w, points);
         labels = s.labels;
         const c = palette[idx % palette.length];
-        return { label: `${devId} — tinggi air (cm)`, data: s.data, borderColor: c, backgroundColor: hexToRgba(c, 0.12), fill: false, tension: 0.3, pointRadius: 2 };
+        return {
+          label: `${devId} — tinggi air (cm)`,
+          data: s.data,
+          borderColor: c,
+          backgroundColor: (ctx) => lineGradientFill(ctx, c),
+          fill: true,
+          tension: 0.35,
+          pointRadius: 2,
+          borderWidth: 2,
+          segment: { borderColor: (ctx) => segmentBorderByLevel(ctx, c) },
+        };
       });
     } else {
       const s = getChartSeries(widget, points);
       labels = s.labels;
-      datasets = [{ label: widget.title || "Grafik", data: s.data, borderColor: color, backgroundColor: hexToRgba(color, 0.18), fill: true, tension: 0.3, pointRadius: 2 }];
+      datasets = [
+        {
+          label: widget.title || "Ketinggian air (cm)",
+          data: s.data,
+          borderColor: color,
+          backgroundColor: (ctx) => lineGradientFill(ctx, color),
+          fill: true,
+          tension: 0.35,
+          pointRadius: 2,
+          borderWidth: 2,
+          segment: { borderColor: (ctx) => segmentBorderByLevel(ctx, color) },
+        },
+      ];
     }
+
+    const yMax = computeChartYMax(datasets, th);
+    const chartOptions = {
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { labels: { color: dark ? "#e5e7eb" : "#111827" } },
+        tooltip: {
+          callbacks: {
+            label(ctx) {
+              const v = ctx.parsed.y;
+              const cm = v == null || !Number.isFinite(v) ? "—" : `${Number(v).toFixed(1)} cm`;
+              return `${ctx.dataset.label}: ${cm}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: "Waktu", color: tickColor, font: { size: 11 } },
+          ticks: { color: tickColor, maxRotation: 45, minRotation: 0, autoSkip: true, maxTicksLimit: 12 },
+          grid: { color: gridColor },
+        },
+        y: {
+          beginAtZero: true,
+          suggestedMax: yMax,
+          title: { display: true, text: "cm", color: tickColor, font: { size: 11 } },
+          ticks: { color: tickColor },
+          grid: { color: gridColor },
+        },
+      },
+    };
+
     if (existing) {
       existing.data.labels = labels;
       existing.data.datasets = datasets;
+      existing.options.scales.y.suggestedMax = yMax;
+      existing.options.scales.x.ticks.maxTicksLimit = 12;
       existing.update();
       return;
     }
     const chart = new Chart(canvas, {
       type: "line",
       data: { labels, datasets },
-      options: {
-        maintainAspectRatio: false,
-        animation: false,
-        plugins: { legend: { labels: { color: dark ? "#e5e7eb" : "#111827" } } },
-        scales: {
-          x: { ticks: { color: dark ? "#9ca3af" : "#374151", maxRotation: 0, autoSkip: true, maxTicksLimit: 6 }, grid: { color: dark ? "#374151" : "#e5e7eb" } },
-          y: { ticks: { color: dark ? "#9ca3af" : "#374151" }, grid: { color: dark ? "#374151" : "#e5e7eb" } }
-        }
-      }
+      plugins: [floodChartThresholdPlugin],
+      options: chartOptions,
     });
     appState.charts.set(widget.id, chart);
   }
@@ -1169,9 +1322,8 @@
     if (elWidgetCmdReset) elWidgetCmdReset.value = editWidget?.commandReset || "reset";
     elWidgetChartPoints.value = Number(editWidget?.chartPoints ?? 60);
     elWidgetChartMode.value = editWidget?.chartMode || "single";
-    elThAmanMax.value = Number(editWidget?.thAmanMax ?? 50);
-    elThSiagaMax.value = Number(editWidget?.thSiagaMax ?? 100);
-    elThAwasMax.value = Number(editWidget?.thAwasMax ?? 150);
+    elThAmanMax.value = Number(editWidget?.thAmanMax ?? 101);
+    elThSiagaMax.value = Number(editWidget?.thSiagaMax ?? 200);
     updateModalVisibilityByType();
     elWidgetModal.classList.add("show");
   }
@@ -1195,9 +1347,8 @@
       commandOff: (elWidgetCmdOff.value || "stop").trim(),
       commandAlert: (elWidgetCmdAlert?.value || "alert").trim(),
       commandReset: (elWidgetCmdReset?.value || "reset").trim(),
-      thAmanMax: Number(elThAmanMax.value || 50),
-      thSiagaMax: Number(elThSiagaMax.value || 100),
-      thAwasMax: Number(elThAwasMax.value || 150)
+      thAmanMax: Number(elThAmanMax.value || 101),
+      thSiagaMax: Number(elThSiagaMax.value || 200)
     });
 
     if (appState.editId) {
@@ -1368,7 +1519,7 @@
     elGrid.addEventListener("click", async (event) => {
       const btn = event.target.closest("[data-action]");
       if (!btn) return;
-      const action = btn.dataset.action, widgetId = btn.dataset.id, widget = appState.widgets.find((w) => w.id === widgetId);
+      const action = btn.dataset.action, widgetId = btn.dataset.id, widget = appState.widgets.find((w) => String(w.id) === String(widgetId));
       if (!widget) return;
 
       if (action === "delete") { if (confirm(`Hapus widget '${widget.title}'?`)) await removeWidgetById(widget.id); }
